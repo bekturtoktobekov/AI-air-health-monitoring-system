@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Air Monitor</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; background: #f0f2f5; padding: 16px; }
+
+    h2 { font-size: 18px; margin-bottom: 12px; color: #333; }
+
+    .aqi-bar {
+      padding: 12px 16px; border-radius: 12px; font-size: 15px;
+      font-weight: 600; margin-bottom: 16px; text-align: center;
+    }
+    .Good     { background: #d4edda; color: #155724; }
+    .Moderate { background: #fff3cd; color: #856404; }
+    .Unhealthy { background: #f8d7da; color: #721c24; }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    @media (min-width: 600px) {
+      .cards { grid-template-columns: repeat(5, 1fr); }
+    }
+
+    .card {
+      background: white; border-radius: 12px;
+      padding: 14px; text-align: center;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+    }
+    .card .val  { font-size: 24px; font-weight: 700; color: #2c3e50; margin: 6px 0; }
+    .card .unit { font-size: 11px; color: #aaa; }
+    .card .lbl  { font-size: 12px; color: #888; }
+
+    .section {
+      background: white; border-radius: 12px; padding: 16px;
+      margin-bottom: 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+    }
+    .section h3 { font-size: 14px; color: #555; margin-bottom: 12px; }
+
+    .stat-row {
+      display: flex; justify-content: space-between;
+      font-size: 13px; padding: 6px 0;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    .stat-row:last-child { border-bottom: none; }
+    .stat-val { font-weight: 600; color: #2c3e50; }
+
+    .corr-badge {
+      display: inline-block; padding: 2px 8px;
+      border-radius: 20px; font-size: 12px; font-weight: 600;
+    }
+    .pos { background: #d4edda; color: #155724; }
+    .neg { background: #f8d7da; color: #721c24; }
+    .neu { background: #e2e3e5; color: #495057; }
+
+    .updated { font-size: 11px; color: #bbb; text-align: right; margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+
+  <h2>Air Quality Monitor</h2>
+  <div id="aqi-bar" class="aqi-bar">Loading...</div>
+  <div class="updated">Last update: <span id="last-time">—</span></div>
+
+  <!-- Live cards -->
+  <div class="cards">
+    <div class="card">
+      <div class="lbl">PM2.5</div>
+      <div class="val" id="v-pm25">—</div>
+      <div class="unit">mg/m³</div>
+    </div>
+    <div class="card">
+      <div class="lbl">PM1.0</div>
+      <div class="val" id="v-pm10">—</div>
+      <div class="unit">mg/m³</div>
+    </div>
+    <div class="card">
+      <div class="lbl">Temperature</div>
+      <div class="val" id="v-temp">—</div>
+      <div class="unit">°C</div>
+    </div>
+    <div class="card">
+      <div class="lbl">Humidity</div>
+      <div class="val" id="v-hum">—</div>
+      <div class="unit">%</div>
+    </div>
+    <div class="card">
+      <div class="lbl">Gas</div>
+      <div class="val" id="v-gas">—</div>
+      <div class="unit">ppm</div>
+    </div>
+  </div>
+
+  <!-- Charts -->
+  <div class="section">
+    <h3>Dust levels</h3>
+    <canvas id="chart-pm"></canvas>
+  </div>
+  <div class="section">
+    <h3>Temperature & humidity</h3>
+    <canvas id="chart-env"></canvas>
+  </div>
+
+  <!-- Stats -->
+  <div class="section">
+    <h3>Statistics (last 500 readings)</h3>
+    <div class="stat-row"><span>PM2.5 avg</span><span class="stat-val" id="s-pm-avg">—</span></div>
+    <div class="stat-row"><span>PM2.5 max</span><span class="stat-val" id="s-pm-max">—</span></div>
+    <div class="stat-row"><span>Temp avg</span><span class="stat-val" id="s-t-avg">—</span></div>
+    <div class="stat-row"><span>Humidity avg</span><span class="stat-val" id="s-h-avg">—</span></div>
+    <div class="stat-row"><span>High PM2.5 events</span><span class="stat-val" id="anom-pm">—</span></div>
+    <div class="stat-row"><span>Gas events (>1000ppm)</span><span class="stat-val" id="anom-gas">—</span></div>
+  </div>
+
+  <!-- Correlations -->
+  <div class="section">
+    <h3>Correlations</h3>
+    <div class="stat-row">
+      <span>PM2.5 vs Humidity</span>
+      <span id="c1">—</span>
+    </div>
+    <div class="stat-row">
+      <span>PM2.5 vs Gas</span>
+      <span id="c2">—</span>
+    </div>
+    <div class="stat-row">
+      <span>Temp vs Humidity</span>
+      <span id="c3">—</span>
+    </div>
+  </div>
+
+<script>
+const pmChart = new Chart(document.getElementById('chart-pm'), {
+  type: 'line',
+  data: { labels: [], datasets: [
+    { label: 'PM2.5', data: [], borderColor: '#e74c3c', tension: 0.3, fill: false, pointRadius: 2 },
+    { label: 'PM1.0', data: [], borderColor: '#e67e22', tension: 0.3, fill: false, pointRadius: 2 }
+  ]},
+  options: { responsive: true, scales: { y: { beginAtZero: true }},
+    plugins: { legend: { position: 'bottom' }}}
+});
+
+const envChart = new Chart(document.getElementById('chart-env'), {
+  type: 'line',
+  data: { labels: [], datasets: [
+    { label: 'Temp (°C)',  data: [], borderColor: '#3498db', tension: 0.3, fill: false, pointRadius: 2 },
+    { label: 'Humidity %', data: [], borderColor: '#2ecc71', tension: 0.3, fill: false, pointRadius: 2 }
+  ]},
+  options: { responsive: true, plugins: { legend: { position: 'bottom' }}}
+});
+
+function corrBadge(val) {
+  const cls = val > 0.3 ? 'pos' : val < -0.3 ? 'neg' : 'neu';
+  return `<span class="corr-badge ${cls}">${val}</span>`;
+}
+
+function aqiClass(aqi) {
+  if (aqi === 'Good') return 'Good';
+  if (aqi === 'Moderate') return 'Moderate';
+  return 'Unhealthy';
+}
+
+async function refresh() {
+  try {
+    const hist = await fetch('/api/history').then(r => r.json());
+    const rev  = hist.reverse().slice(-60); // last 60 points on chart
+    const labels = rev.map(r => r.time.substring(11, 16));
+
+    pmChart.data.labels = labels;
+    pmChart.data.datasets[0].data = rev.map(r => r.pm25);
+    pmChart.data.datasets[1].data = rev.map(r => r.pm10);
+    pmChart.update();
+
+    envChart.data.labels = labels;
+    envChart.data.datasets[0].data = rev.map(r => r.temperature);
+    envChart.data.datasets[1].data = rev.map(r => r.humidity);
+    envChart.update();
+
+    if (rev.length) {
+      const last = rev[rev.length - 1];
+      document.getElementById('v-pm25').textContent = last.pm25?.toFixed(4) ?? '—';
+      document.getElementById('v-pm10').textContent = last.pm10?.toFixed(4) ?? '—';
+      document.getElementById('v-temp').textContent = last.temperature?.toFixed(1) ?? '—';
+      document.getElementById('v-hum').textContent  = last.humidity?.toFixed(1) ?? '—';
+      document.getElementById('v-gas').textContent  = last.gas_ppm?.toFixed(1) ?? '—';
+      document.getElementById('last-time').textContent = last.time.substring(11, 19);
+    }
+
+    const an = await fetch('/api/analysis').then(r => r.json());
+    if (an.avg) {
+      document.getElementById('s-pm-avg').textContent  = an.avg.pm25?.toFixed(4);
+      document.getElementById('s-pm-max').textContent  = an.max.pm25?.toFixed(4);
+      document.getElementById('s-t-avg').textContent   = an.avg.temperature?.toFixed(1) + ' °C';
+      document.getElementById('s-h-avg').textContent   = an.avg.humidity?.toFixed(1) + ' %';
+      document.getElementById('anom-pm').textContent   = an.anomalies.high_pm25;
+      document.getElementById('anom-gas').textContent  = an.anomalies.gas_events;
+      document.getElementById('c1').innerHTML = corrBadge(an.correlation.pm25_vs_humidity);
+      document.getElementById('c2').innerHTML = corrBadge(an.correlation.pm25_vs_gas);
+      document.getElementById('c3').innerHTML = corrBadge(an.correlation.temp_vs_humidity);
+
+      const bar = document.getElementById('aqi-bar');
+      bar.textContent = 'Air quality: ' + an.aqi;
+      bar.className   = 'aqi-bar ' + aqiClass(an.aqi);
+    }
+  } catch(e) {
+    console.error('Refresh error:', e);
+  }
+}
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>
